@@ -1,8 +1,13 @@
+#define GLFW_EXPOSE_NATIVE_WIN32
+#define GLFW_EXPOSE_NATIVE_WGL
+#define GLFW_NATIVE_INCLUDE_NONE
+
 #include <iostream>
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
 #include <dxgi1_6.h>
 #include <glfw/glfw3.h>
+#include <glfw/glfw3native.h>
 
 void throw_if_failed(HRESULT hr) {
     if (FAILED(hr)) {
@@ -84,7 +89,7 @@ int main()
 
     // Create the device handle
     ID3D12Device* device;
-    throw_if_failed(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device));
+    throw_if_failed(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device)));
 
 #if _DEBUG
     // If we're in debug mode, create the debug device handle
@@ -140,7 +145,7 @@ int main()
     ID3D12DescriptorHeap* render_target_view_heap;
     ID3D12Resource* render_targets[backbuffer_count];
     UINT rtv_descriptor_size;
-    IDXGISwapChain3* swapchain;
+    IDXGISwapChain3* swapchain = nullptr;
     D3D12_VIEWPORT viewport;
     D3D12_RECT surface_size;
 
@@ -158,5 +163,26 @@ int main()
     viewport.MinDepth = 0.0f;
     viewport.MaxDepth = 1.0f;
 
-    // TODO: create swapchain
+    // Create swapchain description
+    DXGI_SWAP_CHAIN_DESC1 swapchain_desc{};
+    swapchain_desc.BufferCount = backbuffer_count;
+    swapchain_desc.Width = width;
+    swapchain_desc.Height = height;
+    swapchain_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    swapchain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    swapchain_desc.SampleDesc.Count = 1;
+
+    // Create swapchain
+    IDXGISwapChain1* new_swapchain;
+    factory->CreateSwapChainForHwnd(device, glfwGetWin32Window(window), &swapchain_desc, nullptr, nullptr, &new_swapchain);
+    HRESULT swapchain_support = new_swapchain->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&new_swapchain);
+    if (SUCCEEDED(swapchain_support)) {
+        swapchain = (IDXGISwapChain3*)new_swapchain;
+    }
+
+    if (!swapchain) {
+        throw std::exception();
+    }
+
 }
