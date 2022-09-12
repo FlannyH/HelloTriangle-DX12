@@ -450,14 +450,20 @@ int main()
     D3D12_RANGE const_range{ 0, 0 };
     uint8_t* const_data_begin = nullptr;
 
-    // Upload vertex buffer to GPU
+    // Upload constant buffer to GPU
     {
         D3D12_HEAP_PROPERTIES upload_heap_props = {
             D3D12_HEAP_TYPE_UPLOAD, // The heap will be used to upload data to the GPU
             D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
             D3D12_MEMORY_POOL_UNKNOWN, 1, 1 };
 
-        D3D12_DESCRIPTOR_HEAP_DESC heap_desc{};
+        D3D12_DESCRIPTOR_HEAP_DESC heap_desc{
+            D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+            1,
+            D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+        };
+
+        throw_if_failed(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&const_buffer_heap)));
 
         D3D12_RESOURCE_DESC upload_buffer_desc = {
             D3D12_RESOURCE_DIMENSION_BUFFER, // Can either be texture or buffer, we want a buffer
