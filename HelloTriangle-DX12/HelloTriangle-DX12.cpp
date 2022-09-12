@@ -1,6 +1,4 @@
 #define GLFW_EXPOSE_NATIVE_WIN32
-#define GLFW_EXPOSE_NATIVE_WGL
-#define GLFW_NATIVE_INCLUDE_NONE
 
 #include <iostream>
 #include <d3d12.h>
@@ -27,40 +25,37 @@ int main()
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     GLFWwindow* window = glfwCreateWindow(1280, 720, "Hello Triangle (DirectX 12)", nullptr, nullptr);
-
-    // Main window update loop
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-        glfwSwapBuffers(window);
-    }
+    HWND hwnd = glfwGetWin32Window(window);
 
     // Declare DirectX 12 handles
     IDXGIFactory4* factory;
     ID3D12Debug1* debug_interface;
 
     // Create factory
-    UINT dxgiFactoryFlags = 0;
+    UINT dxgi_factory_flags = 0;
 
 #if _DEBUG
     // If we're in debug mode, create a debug layer for proper error tracking
-    {
-        ID3D12Debug* debug_layer;
-        throw_if_failed(D3D12GetDebugInterface(IID_PPV_ARGS(&debug_layer)));
-        throw_if_failed(debug_layer->QueryInterface(IID_PPV_ARGS(&debug_interface)));
-        debug_interface->EnableDebugLayer();
-        debug_interface->SetEnableGPUBasedValidation(true);
-        dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
-        debug_layer->Release();
-    }
+    ID3D12Debug* debug_layer;
+    ID3D12InfoQueue* debug_info_queue;
+    throw_if_failed(D3D12GetDebugInterface(IID_PPV_ARGS(&debug_layer)));
+    throw_if_failed(debug_layer->QueryInterface(IID_PPV_ARGS(&debug_interface)));
+    debug_interface->EnableDebugLayer();
+    debug_interface->SetEnableGPUBasedValidation(true);
+    dxgi_factory_flags |= DXGI_CREATE_FACTORY_DEBUG;
+    debug_layer->Release();
 #endif
 
-    HRESULT result = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
+    HRESULT result = CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&factory));
 
     /* ADAPTER:
     * An adapter is used to get information about the GPU like the name, manufacturer,
     * amount of VRAM, etc.
-    * We use it here to check if it's a hardware device that supports Direct3D
+    * We use it here to check if it's a hardware device that supports Direct3D 12.0
     */
+
+    // Create the device handle
+    ID3D12Device* device = nullptr;
 
     // Create adapter
     IDXGIAdapter1* adapter;
@@ -74,28 +69,29 @@ int main()
             continue;
         }
 
-        // We should have a hardware adapter now, but does it support Direct3D 12?
-        if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, _uuidof(ID3D12Device), nullptr))) {
+        // We should have a hardware adapter now, but does it support Direct3D 12.0?
+        if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device)))) {
             // Yes it does! We use this one.
             break;
         }
 
         // It doesn't? Unfortunate, let it go and try another adapter
+        device = nullptr;
         adapter->Release();
         adapter_index++;
+    }
+
+    if (device == nullptr) {
+        throw std::exception();
     }
 
     /* DEVICE:
     * A device is our main access to the DirectX 12 API, data structures, rendering functions, etc.
     */
 
-    // Create the device handle
-    ID3D12Device* device;
-    throw_if_failed(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device)));
-
 #if _DEBUG
     // If we're in debug mode, create the debug device handle
-    ID3D12DebugDevice * device_debug;
+    ID3D12DebugDevice* device_debug;
     throw_if_failed(device->QueryInterface(&device_debug));
 #endif
 
@@ -108,7 +104,7 @@ int main()
     */
 
     // Create command queue
-    ID3D12CommandQueue * command_queue;
+    ID3D12CommandQueue* command_queue;
     D3D12_COMMAND_QUEUE_DESC queue_desc = {};
     queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -118,7 +114,7 @@ int main()
     /* COMMAND ALLOCATOR:
     * A command allocator is used to create command lists
     */
-    ID3D12CommandAllocator * command_allocator;
+    ID3D12CommandAllocator* command_allocator;
     throw_if_failed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, 
                                                    IID_PPV_ARGS(&command_allocator)));
 
@@ -130,7 +126,7 @@ int main()
     // Create fence
     UINT frame_index;
     HANDLE fence_event;
-    ID3D12Fence * fence;
+    ID3D12Fence* fence;
     UINT64 fence_value;
     throw_if_failed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
 
@@ -176,9 +172,12 @@ int main()
     swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     swapchain_desc.SampleDesc.Count = 1;
 
+    // Create fullscreen description
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen_desc = {};
+
     // Create swapchain
     IDXGISwapChain1* new_swapchain;
-    factory->CreateSwapChainForHwnd(device, glfwGetWin32Window(window), &swapchain_desc, 
+    result = factory->CreateSwapChainForHwnd(command_queue, hwnd, &swapchain_desc, 
                                     nullptr, nullptr, &new_swapchain);
     HRESULT swapchain_support = new_swapchain->QueryInterface(__uuidof(IDXGISwapChain3), 
                                                                 (void**)&new_swapchain);
@@ -444,7 +443,7 @@ int main()
 
     // Declare handles
     ID3D12Resource* const_buffer;
-    ID3D12DescriptorHeap* const_buffer_heap;
+    ID3D12DescriptorHeap* const_buffer_heap = nullptr;
     D3D12_CONSTANT_BUFFER_VIEW_DESC const_buffer_view_desc = {};
 
     // Only the GPU needs this data, the CPU won't need this
@@ -477,6 +476,8 @@ int main()
         throw_if_failed(device->CreateCommittedResource(&upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_buffer_desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
             ((void**)&const_buffer)));
+
+        assert(const_buffer_heap != nullptr);
         const_buffer_heap->SetName(L"Constant Buffer Upload Resource Heap");
 
         // Create the buffer view
@@ -492,5 +493,19 @@ int main()
         throw_if_failed(const_buffer->Map(0, &const_range, (void**)&const_data_begin));
         memcpy_s(const_data_begin, sizeof(triangle_indices), triangle_indices, sizeof(triangle_indices));
         const_buffer->Unmap(0, nullptr);
+    }
+
+    /* SHADERS
+    * Shaders are loaded as pre-compiled binary files. Shaders are compiled using the Microsoft DirectX Shader
+    * Compiler (https://github.com/microsoft/DirectXShaderCompiler), which compiles .hlsl files into .dxil files.
+    */
+
+
+
+
+    // Main window update loop
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+        glfwSwapBuffers(window);
     }
 }
