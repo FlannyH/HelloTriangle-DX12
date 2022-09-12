@@ -8,6 +8,8 @@
 #include <dxgi1_6.h>
 #include <glfw/glfw3.h>
 #include <glfw/glfw3native.h>
+#include <vector>
+#include "glm/vec3.hpp"
 
 void throw_if_failed(HRESULT hr) {
     if (FAILED(hr)) {
@@ -117,7 +119,8 @@ int main()
     * A command allocator is used to create command lists
     */
     ID3D12CommandAllocator * command_allocator;
-    throw_if_failed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&command_allocator)));
+    throw_if_failed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, 
+                                                   IID_PPV_ARGS(&command_allocator)));
 
     /* FENCE:
     * A fence is used for synchronization between CPU and GPU, and lets you know when the GPU is done
@@ -175,8 +178,10 @@ int main()
 
     // Create swapchain
     IDXGISwapChain1* new_swapchain;
-    factory->CreateSwapChainForHwnd(device, glfwGetWin32Window(window), &swapchain_desc, nullptr, nullptr, &new_swapchain);
-    HRESULT swapchain_support = new_swapchain->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&new_swapchain);
+    factory->CreateSwapChainForHwnd(device, glfwGetWin32Window(window), &swapchain_desc, 
+                                    nullptr, nullptr, &new_swapchain);
+    HRESULT swapchain_support = new_swapchain->QueryInterface(__uuidof(IDXGISwapChain3), 
+                                                                (void**)&new_swapchain);
     if (SUCCEEDED(swapchain_support)) {
         swapchain = (IDXGISwapChain3*)new_swapchain;
     }
@@ -184,5 +189,248 @@ int main()
     if (!swapchain) {
         throw std::exception();
     }
+
+    frame_index = swapchain->GetCurrentBackBufferIndex();
+
+    /* RESOURCE
+    * Simply just a chunk of memory on the GPU
+    */
+
+    /* DESCRIPTOR
+    * Describes said chunk of memory, and how it should be interpreted
+    * Examples of descriptor types: Render Target View (RTV), Shader Resource View (SRV)
+    * Depth Stencil View (DSV), Constant Buffer View (CBV), Unordered Access View (UAV)
+    */
+
+    /* DESCRIPTOR HEAP
+    * A bunch of resource descriptors in a row
+    */
+
+    // Create render target view descriptor heap
+    D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_desc{};
+    rtv_heap_desc.NumDescriptors = backbuffer_count;
+    rtv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    rtv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    throw_if_failed(device->CreateDescriptorHeap(&rtv_heap_desc, IID_PPV_ARGS(&render_target_view_heap)));
+
+    rtv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+    // Create frame resources
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle(render_target_view_heap->GetCPUDescriptorHandleForHeapStart());
+
+    // Create RTV for each frame
+    for (UINT i = 0; i < backbuffer_count; i++) {
+        throw_if_failed(swapchain->GetBuffer(i, IID_PPV_ARGS(&render_targets[i])));
+        device->CreateRenderTargetView(render_targets[i], nullptr, rtv_handle);
+        rtv_handle.ptr += (1 * rtv_descriptor_size);
+    }
+
+    /* ROOT SIGNATURE
+    * A root signature is an object that defines which resource parameters your
+    * shaders have access to, like constant buffers, structured buffers, textures and samplers
+    */
+
+    ID3D12RootSignature* root_signature;
+    D3D12_FEATURE_DATA_ROOT_SIGNATURE feature_data{};
+    feature_data.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
+
+    if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_ROOT_SIGNATURE, &feature_data, sizeof(feature_data)))) {
+        feature_data.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_0;
+    }
+
+    /* DESCRIPTOR RANGE
+    * Describes a chunk of descriptors in a row, saying what type of descriptors it holds, 
+    * how many descriptors it holds, the offset, etc.
+    */
+
+    // We want one constant buffer resource on the GPU, so add it to the descriptor ranges
+    D3D12_DESCRIPTOR_RANGE1 ranges[1];
+    ranges[0].BaseShaderRegister = 0;
+    ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_CBV;
+    ranges[0].NumDescriptors = 1;
+    ranges[0].RegisterSpace = 0;
+    ranges[0].OffsetInDescriptorsFromTableStart = 0;
+    ranges[0].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+
+    /* ROOT PARAMETER
+    * Determines the shader visibility, the type of parameter, the number of descriptor ranges, 
+    * and holds a pointer to an array of ranges
+    */
+
+    // Bind the descriptor ranges to the descriptor table of the root signature
+    D3D12_ROOT_PARAMETER1 root_parameters[1];
+    root_parameters[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    root_parameters[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    root_parameters[0].DescriptorTable.NumDescriptorRanges = 1;
+    root_parameters[0].DescriptorTable.pDescriptorRanges = ranges;
+
+    /* ROOT SIGNATURE DESCRIPTION
+    * Determines the number of parameters, the number of samplers, and holds pointers to 
+    * said parameters and samplers.
+    */
+
+    // Create a root signature description
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC root_signature_desc;
+    root_signature_desc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    root_signature_desc.Desc_1_1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    root_signature_desc.Desc_1_1.NumParameters = 1;
+    root_signature_desc.Desc_1_1.pParameters = root_parameters;
+    root_signature_desc.Desc_1_1.NumStaticSamplers = 0;
+    root_signature_desc.Desc_1_1.pStaticSamplers = nullptr;
+
+    /* EXTRA NOTES:
+    * A root signature has a root signature description.
+    * A root signature description has root parameters and samplers.
+    * A root parameter has descriptor ranges.
+    * A descriptor range has a bunch of descriptors.
+    * A descriptor determines how a resource should be used.
+    * So: root signature description -> root params[] -> descriptor range[] -> descriptor[] -> resource
+    */
+
+    // Now let's create a root signature
+    ID3DBlob* signature;
+    ID3DBlob* error;
+    try {
+        throw_if_failed(D3D12SerializeVersionedRootSignature(&root_signature_desc, &signature, &error));
+        throw_if_failed(device->CreateRootSignature(0, signature->GetBufferPointer(), 
+                        signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
+        root_signature->SetName(L"Hello Triangle Root Signature");
+    }
+    catch (std::exception e) {
+        const char* errStr = (const char*)error->GetBufferPointer();
+        std::cout << errStr;
+        error->Release();
+        error = nullptr;
+    }
+
+    if (signature) {
+        signature->Release();
+        signature = nullptr;
+    }
+
+    /* HEAP
+    * A heap is a sort of gateway to GPU memory, which you can use to upload buffers or 
+    * textures to the GPU.
+    */
+
+    // Vertex struct
+    struct Vertex {
+        glm::vec3 pos;
+        glm::vec3 color;
+    };
+
+    // The vertex buffer we'll display to the screen
+    Vertex triangle_verts[] = {
+        {{+1.f, -1.f, 0.f}, {1.f, 0.f, 0.f }},
+        {{-1.f, -1.f, 0.f}, {0.f, 1.f, 0.f }},
+        {{ 0.f, +1.f, 0.f}, {0.f, 0.f, 1.f }},
+    };
+    uint32_t triangle_indices[] = {
+        1,
+        2,
+        3
+    };
+
+    /* VERTEX BUFFER VIEW
+    * Similar to a VAO in OpenGL. It has the GPU address of the buffer, the size of the buffer, and the stride
+    * of each vertex entry of the buffer.
+    */
+
+    // Declare handles
+    ID3D12Resource* vertex_buffer;
+    D3D12_VERTEX_BUFFER_VIEW vertex_buffer_view;
+
+    // Only the GPU needs this data, the CPU won't need this
+    D3D12_RANGE vertex_range{ 0, 0 };
+    uint8_t* vertex_data_begin = nullptr;
+
+    // Upload vertex buffer to GPU
+    {
+        D3D12_HEAP_PROPERTIES upload_heap_props = {
+            D3D12_HEAP_TYPE_UPLOAD, // The heap will be used to upload data to the GPU
+            D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+            D3D12_MEMORY_POOL_UNKNOWN, 1, 1 };
+
+        D3D12_RESOURCE_DESC upload_buffer_desc = {
+            D3D12_RESOURCE_DIMENSION_BUFFER, // Can either be texture or buffer, we want a buffer
+            0,
+            sizeof(triangle_verts),
+            1,
+            1,
+            1,
+            DXGI_FORMAT_UNKNOWN, // This is only really useful for textures, so for buffer this is unknown
+            {1, 0}, // Texture sampling quality settings, not important for non-textures, so set it to lowest
+            D3D12_TEXTURE_LAYOUT_ROW_MAJOR, // First left to right, then top to bottom
+            D3D12_RESOURCE_FLAG_NONE,
+        };
+
+
+        throw_if_failed(device->CreateCommittedResource(&upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_buffer_desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
+            ((void**)&vertex_buffer)));
+
+        // Bind the vertex buffer, copy the data to it, then unbind the vertex buffer
+        throw_if_failed(vertex_buffer->Map(0, &vertex_range, (void**)&vertex_data_begin));
+        memcpy_s(vertex_data_begin, sizeof(triangle_verts), triangle_verts, sizeof(triangle_verts));
+        vertex_buffer->Unmap(0, nullptr);
+
+        // Init the buffer view
+        vertex_buffer_view = D3D12_VERTEX_BUFFER_VIEW{
+            vertex_buffer->GetGPUVirtualAddress(),
+            sizeof(Vertex),
+            sizeof(triangle_verts)
+        }; 
+    }
+
+    /* INDEX BUFFER VIEW
+    * Same idea as vertex buffer view, except the data integers
+    */
+
+    // Declare handles
+    ID3D12Resource* index_buffer;
+    D3D12_INDEX_BUFFER_VIEW index_buffer_view;
+
+    // Only the GPU needs this data, the CPU won't need this
+    D3D12_RANGE index_range{ 0, 0 };
+    uint8_t* index_data_begin = nullptr;
+
+    // Upload vertex buffer to GPU
+    {
+        D3D12_HEAP_PROPERTIES upload_heap_props = {
+            D3D12_HEAP_TYPE_UPLOAD, // The heap will be used to upload data to the GPU
+            D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+            D3D12_MEMORY_POOL_UNKNOWN, 1, 1 };
+
+        D3D12_RESOURCE_DESC upload_buffer_desc = {
+            D3D12_RESOURCE_DIMENSION_BUFFER, // Can either be texture or buffer, we want a buffer
+            0,
+            sizeof(triangle_indices),
+            1,
+            1,
+            1,
+            DXGI_FORMAT_UNKNOWN, // This is only really useful for textures, so for buffer this is unknown
+            {1, 0}, // Texture sampling quality settings, not important for non-textures, so set it to lowest
+            D3D12_TEXTURE_LAYOUT_ROW_MAJOR, // First left to right, then top to bottom
+            D3D12_RESOURCE_FLAG_NONE,
+        };
+
+
+        throw_if_failed(device->CreateCommittedResource(&upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_buffer_desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
+            ((void**)&index_buffer)));
+
+        // Bind the vertex buffer, copy the data to it, then unbind the vertex buffer
+        throw_if_failed(index_buffer->Map(0, &index_range, (void**)&index_data_begin));
+        memcpy_s(index_data_begin, sizeof(triangle_indices), triangle_indices, sizeof(triangle_indices));
+        index_buffer->Unmap(0, nullptr);
+
+        // Init the buffer view
+        index_buffer_view = D3D12_INDEX_BUFFER_VIEW{
+            index_buffer->GetGPUVirtualAddress(),
+            sizeof(Vertex),
+            DXGI_FORMAT_R32_UINT,
+        };
+    }
+
 
 }
