@@ -432,5 +432,65 @@ int main()
         };
     }
 
+    /* CONSTANT BUFFER
+    * Same as uniform buffers in OpenGL, usually meant to hold transform matrices, initialized 
+    * the same way as the other buffers. In this case I will use it to make the triangle pulsate.
+    */
 
+    // Define what the constant buffer's layout is
+    struct {
+        glm::vec3 color_mul;
+    } const_buffer_data_struct;
+
+    // Declare handles
+    ID3D12Resource* const_buffer;
+    ID3D12DescriptorHeap* const_buffer_heap;
+    D3D12_CONSTANT_BUFFER_VIEW_DESC const_buffer_view_desc = {};
+
+    // Only the GPU needs this data, the CPU won't need this
+    D3D12_RANGE const_range{ 0, 0 };
+    uint8_t* const_data_begin = nullptr;
+
+    // Upload vertex buffer to GPU
+    {
+        D3D12_HEAP_PROPERTIES upload_heap_props = {
+            D3D12_HEAP_TYPE_UPLOAD, // The heap will be used to upload data to the GPU
+            D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+            D3D12_MEMORY_POOL_UNKNOWN, 1, 1 };
+
+        D3D12_DESCRIPTOR_HEAP_DESC heap_desc{};
+
+        D3D12_RESOURCE_DESC upload_buffer_desc = {
+            D3D12_RESOURCE_DIMENSION_BUFFER, // Can either be texture or buffer, we want a buffer
+            0,
+            (sizeof(const_buffer_data_struct) | 0xFF) + 1, // Constant buffers must be 256-byte aligned
+            1,
+            1,
+            1,
+            DXGI_FORMAT_UNKNOWN, // This is only really useful for textures, so for buffer this is unknown
+            {1, 0}, // Texture sampling quality settings, not important for non-textures, so set it to lowest
+            D3D12_TEXTURE_LAYOUT_ROW_MAJOR, // First left to right, then top to bottom
+            D3D12_RESOURCE_FLAG_NONE,
+        };
+
+
+        throw_if_failed(device->CreateCommittedResource(&upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_buffer_desc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
+            ((void**)&const_buffer)));
+        const_buffer_heap->SetName(L"Constant Buffer Upload Resource Heap");
+
+        // Create the buffer view
+        const_buffer_view_desc = {
+            const_buffer->GetGPUVirtualAddress(),
+            (sizeof(const_buffer_data_struct) | 0xFF) + 1
+        };
+
+        D3D12_CPU_DESCRIPTOR_HANDLE const_buffer_view_handle(const_buffer_heap->GetCPUDescriptorHandleForHeapStart());
+        device->CreateConstantBufferView(&const_buffer_view_desc, const_buffer_view_handle);
+
+        // Bind the vertex buffer, copy the data to it, then unbind the vertex buffer
+        throw_if_failed(const_buffer->Map(0, &const_range, (void**)&const_data_begin));
+        memcpy_s(const_data_begin, sizeof(triangle_indices), triangle_indices, sizeof(triangle_indices));
+        const_buffer->Unmap(0, nullptr);
+    }
 }
