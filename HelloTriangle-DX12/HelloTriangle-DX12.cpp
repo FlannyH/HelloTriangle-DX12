@@ -532,6 +532,11 @@ int main()
     * - Record raster commands (e.g. set viewport, clear render target, set primitive type, bind vert/index buffer, draw indexed instanced)
     * - Setup and wait for resource barrier for present target
     * - Close the command list
+    * 
+    * // TO FIX THE CODE
+    * - Split each step into its own function
+    * - Dont Repeat Yourself
+    * - Maybe just pop this into the FlanRenderer-RW header, it was made for cross-api stuff so might as well
     */
 
 
