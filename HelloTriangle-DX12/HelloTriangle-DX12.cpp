@@ -506,7 +506,33 @@ int main()
     * Compiler (https://github.com/microsoft/DirectXShaderCompiler), which compiles .hlsl files into .dxil files.
     */
 
-
+    /* TODO
+    * // ON INIT
+    * - Write shaders
+    * - Make shader building pipeline
+    * - Create pipeline descriptor
+    * - Assign root signature
+    * - Load vertex shader bytecode
+    * - Load pixel shader bytecode
+    * - Set up rasterizer descriptor
+    * - Set up blend descriptor
+    * - Set up depth/stencil state
+    * - Set up output
+    * - Create graphics pipeline state
+    * - Create command list
+    * 
+    * // PER FRAME
+    * - Reset the command allocator
+    * - Reset the command list
+    * - Bind root signature
+    * - Bind constant buffer heap
+    * - Set root descriptor table
+    * - Setup and wait for resource barrier for render target
+    * - Set render target
+    * - Record raster commands (e.g. set viewport, clear render target, set primitive type, bind vert/index buffer, draw indexed instanced)
+    * - Setup and wait for resource barrier for present target
+    * - Close the command list
+    */
 
 
     // Main window update loop
