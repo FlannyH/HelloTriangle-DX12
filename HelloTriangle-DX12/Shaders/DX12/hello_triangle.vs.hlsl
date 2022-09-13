@@ -18,7 +18,7 @@ struct VertexOutput
 VertexOutput main(VertexInput vertexInput)
 {
     VertexOutput output;
-    output.color = vertexInput.in_color;
+    output.color = vertexInput.in_color * color;
     output.position = float4(vertexInput.in_pos, 0.5f);
     return output;
 }

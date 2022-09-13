@@ -9,6 +9,7 @@
 #include <vector>
 #include "glm/vec3.hpp"
 #include <fstream>
+#include <chrono>
 
 void throw_if_failed(HRESULT hr) {
     if (FAILED(hr)) {
@@ -501,9 +502,9 @@ int main()
         D3D12_CPU_DESCRIPTOR_HANDLE const_buffer_view_handle(const_buffer_heap->GetCPUDescriptorHandleForHeapStart());
         device->CreateConstantBufferView(&const_buffer_view_desc, const_buffer_view_handle);
 
-        // Bind the vertex buffer, copy the data to it, then unbind the vertex buffer
+        // Bind the constant buffer, copy the data to it, then unbind the constant buffer
         throw_if_failed(const_buffer->Map(0, &const_range, (void**)&const_data_begin));
-        memcpy_s(const_data_begin, sizeof(triangle_indices), triangle_indices, sizeof(triangle_indices));
+        memcpy_s(const_data_begin, sizeof(const_buffer_data_struct), &const_buffer_data_struct, sizeof(const_buffer_data_struct));
         const_buffer->Unmap(0, nullptr);
     }
 
@@ -615,8 +616,28 @@ int main()
 
 
     // Main window update loop
+    auto start = std::chrono::high_resolution_clock::now();
+    auto end = std::chrono::high_resolution_clock::now();
+    float time = 0.0f;
+
     while (!glfwWindowShouldClose(window)) {
         puts("Start of frame");
+        
+        // Update delta time
+        end = std::chrono::high_resolution_clock::now();
+        float dt = std::chrono::duration<float, std::ratio<1, 1>>(end - start).count();
+        time += dt;
+        start = std::chrono::high_resolution_clock::now();
+        printf("%.3f\n", time);;
+
+        // Update constant buffer    
+        const_buffer_data_struct.color_mul.r = sinf(time + 0.0f * 3.141593f) + 1.f;
+        const_buffer_data_struct.color_mul.g = sinf(time + 0.5f * 3.141593f) + 1.f;
+        const_buffer_data_struct.color_mul.b = sinf(time + 1.0f * 3.141593f) + 1.f;
+        throw_if_failed(const_buffer->Map(0, &const_range, (void**)&const_data_begin));
+        memcpy_s(const_data_begin, sizeof(const_buffer_data_struct), &const_buffer_data_struct, sizeof(const_buffer_data_struct));
+        const_buffer->Unmap(0, nullptr);
+
         // Bind root signature
         command_list->SetGraphicsRootSignature(root_signature);
 
