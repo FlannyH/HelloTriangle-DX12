@@ -8,6 +8,7 @@
 #include <glfw/glfw3native.h>
 #include <vector>
 #include "glm/vec3.hpp"
+#include <fstream>
 
 void throw_if_failed(HRESULT hr) {
     if (FAILED(hr)) {
@@ -18,6 +19,8 @@ void throw_if_failed(HRESULT hr) {
 constexpr uint32_t width = 1280;
 constexpr uint32_t height = 720;
 static const UINT backbuffer_count = 2;
+
+void read_file(const std::string& path, int& size_bytes, char*& data, const bool silent);
 
 int main()
 {
@@ -393,7 +396,7 @@ int main()
     D3D12_RANGE index_range{ 0, 0 };
     uint8_t* index_data_begin = nullptr;
 
-    // Upload vertex buffer to GPU
+    // Upload index buffer to GPU
     {
         D3D12_HEAP_PROPERTIES upload_heap_props = {
             D3D12_HEAP_TYPE_UPLOAD, // The heap will be used to upload data to the GPU
@@ -418,7 +421,7 @@ int main()
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
             ((void**)&index_buffer)));
 
-        // Bind the vertex buffer, copy the data to it, then unbind the vertex buffer
+        // Bind the index buffer, copy the data to it, then unbind the index buffer
         throw_if_failed(index_buffer->Map(0, &index_range, (void**)&index_data_begin));
         memcpy_s(index_data_begin, sizeof(triangle_indices), triangle_indices, sizeof(triangle_indices));
         index_buffer->Unmap(0, nullptr);
@@ -506,14 +509,61 @@ int main()
     * Compiler (https://github.com/microsoft/DirectXShaderCompiler), which compiles .hlsl files into .dxil files.
     */
 
+    // Load vertex shader
+    std::string file_to_load = "Assets/Shaders/DX12/hello_triangle";
+    D3D12_SHADER_BYTECODE vs_bytecode{};
+    D3D12_SHADER_BYTECODE ps_bytecode{};
+    std::string vs_path = file_to_load + ".vs.cso";
+    std::string ps_path = file_to_load + ".ps.cso";
+    int vs_size = 0;
+    int ps_size = 0;
+    char* vs_data = (char*)vs_bytecode.pShaderBytecode;
+    char* ps_data = (char*)ps_bytecode.pShaderBytecode;
+    read_file(vs_path, vs_size, vs_data, false);
+    read_file(ps_path, ps_size, ps_data, false);
+    vs_bytecode.BytecodeLength = vs_size;
+    ps_bytecode.BytecodeLength = ps_size;
+
+    /* PIPELINE STATE
+    * The pipeline state has all the info you need to execute a draw call
+    */
+
+    // Define graphics pipeline
+    ID3D12PipelineState* pipeline_state;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_state_desc;
+
+    // Define input assembly - this defines what our shader input is
+    D3D12_INPUT_ELEMENT_DESC input_element_descs[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+    };
+    pipeline_state_desc.InputLayout = { input_element_descs, _countof(input_element_descs) };
+
+    // Assign root signature
+    pipeline_state_desc.pRootSignature = root_signature;
+
+    // Bind shaders
+    pipeline_state_desc.VS = vs_bytecode;
+    pipeline_state_desc.PS = ps_bytecode;
+
+    // Set up rasterizer description
+    D3D12_RASTERIZER_DESC raster_desc;
+    raster_desc.FillMode = D3D12_FILL_MODE_SOLID;
+    raster_desc.CullMode = D3D12_CULL_MODE_NONE;
+    raster_desc.FrontCounterClockwise = FALSE;
+    raster_desc.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
+    raster_desc.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
+    raster_desc.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
+    raster_desc.DepthClipEnable = TRUE;
+    raster_desc.MultisampleEnable = FALSE;
+    raster_desc.AntialiasedLineEnable = FALSE;
+    raster_desc.ForcedSampleCount = 0;
+    raster_desc.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+    pipeline_state_desc.RasterizerState = raster_desc;
+    pipeline_state_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+
     /* TODO
     * // ON INIT
-    * - Write shaders
-    * - Make shader building pipeline
-    * - Create pipeline descriptor
-    * - Assign root signature
-    * - Load vertex shader bytecode
-    * - Load pixel shader bytecode
     * - Set up rasterizer descriptor
     * - Set up blend descriptor
     * - Set up depth/stencil state
@@ -545,4 +595,46 @@ int main()
         glfwPollEvents();
         glfwSwapBuffers(window);
     }
+}
+
+void read_file(const std::string& path, int& size_bytes, char*& data, const bool silent)
+{
+    //Open file
+    std::ifstream file_stream(path, std::ios::binary);
+
+    //Is it actually open?
+    if (file_stream.is_open() == false)
+    {
+        if (!silent)
+            printf("[ERROR] Failed to open file '%s'!\n", path.c_str());
+        size_bytes = 0;
+        data = nullptr;
+        return;
+    }
+
+    //See how big the file is so we can allocate the right amount of memory
+    const auto begin = file_stream.tellg();
+    file_stream.seekg(0, std::ifstream::end);
+    const auto end = file_stream.tellg();
+    const auto size = end - begin;
+    size_bytes = size;
+
+    //Allocate memory
+    data = static_cast<char*>(malloc(static_cast<uint32_t>(size)));
+
+    //Load file data into that memory
+    file_stream.seekg(0, std::ifstream::beg);
+    std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file_stream), {});
+
+    //Is it actually open?
+    if (buffer.empty())
+    {
+        if (!silent)
+            printf("[ERROR] Failed to open file '%s'!\n", path.c_str());
+        size_bytes = 0;
+        data = nullptr;
+        return;
+    }
+    memcpy(data, &buffer[0], size_bytes);
+
 }

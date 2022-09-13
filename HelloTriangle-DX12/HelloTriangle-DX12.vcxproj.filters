@@ -19,4 +19,8 @@
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <FxCompile Include="Shaders\DX12\hello_triangle.vs.hlsl" />
+    <FxCompile Include="Shaders\DX12\hello_triangle.ps.hlsl" />
+  </ItemGroup>
 </Project>
