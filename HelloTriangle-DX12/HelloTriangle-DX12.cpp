@@ -128,10 +128,13 @@ int main()
 
     // Create fence
     UINT frame_index;
-    HANDLE fence_event;
-    ID3D12Fence* fence;
-    UINT64 fence_value;
-    throw_if_failed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
+    HANDLE fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    ID3D12Fence* fences[backbuffer_count];
+    UINT64 fence_values[backbuffer_count];
+    for (int i = 0; i < backbuffer_count; ++i) {
+        throw_if_failed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fences[i])));
+        fence_values[i] = 0;
+    }
 
     /* BARRIER:
     * A barrier is used for resources, to determine how the driver should access it.
@@ -146,7 +149,7 @@ int main()
     UINT curr_buffer;
     ID3D12DescriptorHeap* render_target_view_heap;
     ID3D12Resource* render_targets[backbuffer_count];
-    UINT rtv_descriptor_size;
+    UINT render_target_view_descriptor_size;
     IDXGISwapChain3* swapchain = nullptr;
     D3D12_VIEWPORT viewport;
     D3D12_RECT surface_size;
@@ -209,22 +212,22 @@ int main()
     */
 
     // Create render target view descriptor heap
-    D3D12_DESCRIPTOR_HEAP_DESC rtv_heap_desc{};
-    rtv_heap_desc.NumDescriptors = backbuffer_count;
-    rtv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    rtv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    throw_if_failed(device->CreateDescriptorHeap(&rtv_heap_desc, IID_PPV_ARGS(&render_target_view_heap)));
+    D3D12_DESCRIPTOR_HEAP_DESC render_target_view_heap_desc{};
+    render_target_view_heap_desc.NumDescriptors = backbuffer_count;
+    render_target_view_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    render_target_view_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    throw_if_failed(device->CreateDescriptorHeap(&render_target_view_heap_desc, IID_PPV_ARGS(&render_target_view_heap)));
 
-    rtv_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    render_target_view_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
     // Create frame resources
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle(render_target_view_heap->GetCPUDescriptorHandleForHeapStart());
+    D3D12_CPU_DESCRIPTOR_HANDLE render_target_view_handle(render_target_view_heap->GetCPUDescriptorHandleForHeapStart());
 
     // Create RTV for each frame
     for (UINT i = 0; i < backbuffer_count; i++) {
         throw_if_failed(swapchain->GetBuffer(i, IID_PPV_ARGS(&render_targets[i])));
-        device->CreateRenderTargetView(render_targets[i], nullptr, rtv_handle);
-        rtv_handle.ptr += (1 * rtv_descriptor_size);
+        device->CreateRenderTargetView(render_targets[i], nullptr, render_target_view_handle);
+        render_target_view_handle.ptr += (1 * render_target_view_descriptor_size);
     }
 
     /* ROOT SIGNATURE
@@ -232,7 +235,7 @@ int main()
     * shaders have access to, like constant buffers, structured buffers, textures and samplers
     */
 
-    ID3D12RootSignature* root_signature;
+    ID3D12RootSignature* root_signature = nullptr;
     D3D12_FEATURE_DATA_ROOT_SIGNATURE feature_data{};
     feature_data.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
 
@@ -323,14 +326,14 @@ int main()
 
     // The vertex buffer we'll display to the screen
     Vertex triangle_verts[] = {
-        {{+1.f, -1.f, 0.f}, {1.f, 0.f, 0.f }},
-        {{-1.f, -1.f, 0.f}, {0.f, 1.f, 0.f }},
-        {{ 0.f, +1.f, 0.f}, {0.f, 0.f, 1.f }},
+        {{+0.5f, -0.5f, 0.f}, {1.f, 0.f, 0.f }},
+        {{-0.5f, -0.5f, 0.f}, {0.f, 1.f, 0.f }},
+        {{ 0.0f, +0.5f, 0.f}, {0.f, 0.f, 1.f }},
     };
     uint32_t triangle_indices[] = {
+        0,
         1,
-        2,
-        3
+        2
     };
 
     /* VERTEX BUFFER VIEW
@@ -379,8 +382,8 @@ int main()
         // Init the buffer view
         vertex_buffer_view = D3D12_VERTEX_BUFFER_VIEW{
             vertex_buffer->GetGPUVirtualAddress(),
+            sizeof(triangle_verts),
             sizeof(Vertex),
-            sizeof(triangle_verts)
         }; 
     }
 
@@ -429,7 +432,7 @@ int main()
         // Init the buffer view
         index_buffer_view = D3D12_INDEX_BUFFER_VIEW{
             index_buffer->GetGPUVirtualAddress(),
-            sizeof(Vertex),
+            sizeof(triangle_indices),
             DXGI_FORMAT_R32_UINT,
         };
     }
@@ -517,12 +520,14 @@ int main()
     std::string ps_path = file_to_load + ".ps.cso";
     int vs_size = 0;
     int ps_size = 0;
-    char* vs_data = (char*)vs_bytecode.pShaderBytecode;
-    char* ps_data = (char*)ps_bytecode.pShaderBytecode;
+    char* vs_data = nullptr;
+    char* ps_data = nullptr;
     read_file(vs_path, vs_size, vs_data, false);
     read_file(ps_path, ps_size, ps_data, false);
     vs_bytecode.BytecodeLength = vs_size;
     ps_bytecode.BytecodeLength = ps_size;
+    vs_bytecode.pShaderBytecode = vs_data;
+    ps_bytecode.pShaderBytecode = ps_data;
 
     /* PIPELINE STATE
     * The pipeline state has all the info you need to execute a draw call
@@ -530,12 +535,12 @@ int main()
 
     // Define graphics pipeline
     ID3D12PipelineState* pipeline_state;
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_state_desc;
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipeline_state_desc{};
 
     // Define input assembly - this defines what our shader input is
     D3D12_INPUT_ELEMENT_DESC input_element_descs[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
-        {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, pos), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex, color), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
     pipeline_state_desc.InputLayout = { input_element_descs, _countof(input_element_descs) };
 
@@ -562,39 +567,140 @@ int main()
     pipeline_state_desc.RasterizerState = raster_desc;
     pipeline_state_desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 
+    // Setup color and alpha blend modes
+    D3D12_BLEND_DESC blend_desc{};
+    blend_desc.AlphaToCoverageEnable = FALSE;
+    blend_desc.IndependentBlendEnable = FALSE;
+    const D3D12_RENDER_TARGET_BLEND_DESC default_render_target_blend_desc = {
+        FALSE,
+        FALSE,
+        D3D12_BLEND_ONE,
+        D3D12_BLEND_ZERO,
+        D3D12_BLEND_OP_ADD,
+        D3D12_BLEND_ONE,
+        D3D12_BLEND_ZERO,
+        D3D12_BLEND_OP_ADD,
+        D3D12_LOGIC_OP_NOOP,
+        D3D12_COLOR_WRITE_ENABLE_ALL,
+    };
+
+    for (UINT i = 0; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
+        blend_desc.RenderTarget[i] = default_render_target_blend_desc;
+
+    pipeline_state_desc.BlendState = blend_desc;
+
+
+    // Set up depth/stencil state
+    pipeline_state_desc.DepthStencilState.DepthEnable = FALSE;
+    pipeline_state_desc.DepthStencilState.StencilEnable = FALSE;
+    pipeline_state_desc.SampleMask = UINT_MAX;
+
+    // Setup render target output
+    pipeline_state_desc.NumRenderTargets = 1;
+    pipeline_state_desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pipeline_state_desc.SampleDesc.Count = 1;
+
+    // Create graphics pipeline state
+    try {
+        throw_if_failed(device->CreateGraphicsPipelineState(&pipeline_state_desc, IID_PPV_ARGS(&pipeline_state)));
+    }
+    catch (std::exception e) {
+        puts("Failed to create Graphics Pipeline");
+    }
+
+    // Create command allocator and command list
+    ID3D12PipelineState* initial_pipeline_state = nullptr;
+    ID3D12GraphicsCommandList* command_list;
+    throw_if_failed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator, pipeline_state, IID_PPV_ARGS(&command_list)));
+
+
+    // Main window update loop
+    while (!glfwWindowShouldClose(window)) {
+        puts("Start of frame");
+        // Bind root signature
+        command_list->SetGraphicsRootSignature(root_signature);
+
+        // Bind constant buffer
+        ID3D12DescriptorHeap* descriptor_heaps[] = { const_buffer_heap };
+        command_list->SetDescriptorHeaps(_countof(descriptor_heaps), descriptor_heaps);
+        D3D12_GPU_DESCRIPTOR_HANDLE const_buffer_view_handle(const_buffer_heap->GetGPUDescriptorHandleForHeapStart());
+        
+        // Set root descriptor table
+        command_list->SetGraphicsRootDescriptorTable(0, const_buffer_view_handle);
+
+        // Set backbuffer as render target
+        D3D12_RESOURCE_BARRIER render_target_barrier;
+        render_target_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        render_target_barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        render_target_barrier.Transition.pResource = render_targets[frame_index];
+        render_target_barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+        render_target_barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        render_target_barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        command_list->ResourceBarrier(1, &render_target_barrier);
+
+        // Set render target
+        D3D12_CPU_DESCRIPTOR_HANDLE render_target_view_handle(render_target_view_heap->GetCPUDescriptorHandleForHeapStart());
+        render_target_view_handle.ptr += frame_index * render_target_view_descriptor_size;
+        command_list->OMSetRenderTargets(1, &render_target_view_handle, FALSE, nullptr);
+
+        // Record raster commands
+        const float clear_color[] = {0.1f, 0.1f, 0.2f, 1.0f};
+        command_list->RSSetViewports(1, &viewport); // Set viewport
+        command_list->RSSetScissorRects(1, &surface_size); // todo: comment
+        command_list->ClearRenderTargetView(render_target_view_handle, clear_color, 0, nullptr); // Clear the screen
+        command_list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // We draw triangles
+        command_list->IASetVertexBuffers(0, 1, &vertex_buffer_view); // Bind vertex buffer
+        command_list->IASetIndexBuffer(&index_buffer_view); // Bind index buffer
+        
+        // Submit draw call
+        command_list->DrawIndexedInstanced(3, 1, 0, 0, 0);
+
+        // Present backbuffer
+        D3D12_RESOURCE_BARRIER present_barrier;
+        present_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        present_barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        present_barrier.Transition.pResource = render_targets[frame_index];
+        present_barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        present_barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+        present_barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        command_list->ResourceBarrier(1, &present_barrier);
+
+        // Finish the command list, we're done with the frame
+        throw_if_failed(command_list->Close());
+
+        // Execute command list
+        ID3D12CommandList* command_lists[] = { command_list };
+        command_queue->ExecuteCommandLists(_countof(command_lists), command_lists);
+
+        // Present
+        swapchain->Present(1, 0);
+
+        // Use fence to wait until the frame is fully rendered
+        throw_if_failed(command_queue->Signal(fences[frame_index], fence_values[frame_index]));
+
+        if (fences[frame_index]->GetCompletedValue() < fence_values[frame_index]) {
+            throw_if_failed(fences[frame_index]->SetEventOnCompletion(fence_values[frame_index], fence_event));
+            WaitForSingleObject(fence_event, INFINITE);
+        }
+        fence_values[frame_index]++;
+
+        frame_index = swapchain->GetCurrentBackBufferIndex();
+
+        // Update GLFW window
+        glfwPollEvents();
+        glfwSwapBuffers(window);
+
+        // Reset command allocator and use the raster graphics pipeline
+        throw_if_failed(command_allocator->Reset());
+        throw_if_failed(command_list->Reset(command_allocator, pipeline_state));
+    }
+
     /* TODO
-    * // ON INIT
-    * - Set up rasterizer descriptor
-    * - Set up blend descriptor
-    * - Set up depth/stencil state
-    * - Set up output
-    * - Create graphics pipeline state
-    * - Create command list
-    * 
-    * // PER FRAME
-    * - Reset the command allocator
-    * - Reset the command list
-    * - Bind root signature
-    * - Bind constant buffer heap
-    * - Set root descriptor table
-    * - Setup and wait for resource barrier for render target
-    * - Set render target
-    * - Record raster commands (e.g. set viewport, clear render target, set primitive type, bind vert/index buffer, draw indexed instanced)
-    * - Setup and wait for resource barrier for present target
-    * - Close the command list
-    * 
     * // TO FIX THE CODE
     * - Split each step into its own function
     * - Dont Repeat Yourself
     * - Maybe just pop this into the FlanRenderer-RW header, it was made for cross-api stuff so might as well
     */
-
-
-    // Main window update loop
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-        glfwSwapBuffers(window);
-    }
 }
 
 void read_file(const std::string& path, int& size_bytes, char*& data, const bool silent)
@@ -636,5 +742,4 @@ void read_file(const std::string& path, int& size_bytes, char*& data, const bool
         return;
     }
     memcpy(data, &buffer[0], size_bytes);
-
 }
