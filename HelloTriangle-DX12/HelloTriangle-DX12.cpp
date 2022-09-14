@@ -14,7 +14,7 @@
 
 using Microsoft::WRL::ComPtr;
 
-void throw_if_failed(HRESULT hr) {
+void throw_if_failed(const HRESULT hr) {
     if (FAILED(hr)) {
         throw std::exception();
     }
