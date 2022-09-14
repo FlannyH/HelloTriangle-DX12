@@ -10,6 +10,9 @@
 #include "glm/vec3.hpp"
 #include <fstream>
 #include <chrono>
+#include <wrl.h>
+
+using Microsoft::WRL::ComPtr;
 
 void throw_if_failed(HRESULT hr) {
     if (FAILED(hr)) {
@@ -19,9 +22,9 @@ void throw_if_failed(HRESULT hr) {
 
 constexpr uint32_t width = 1280;
 constexpr uint32_t height = 720;
-static const UINT backbuffer_count = 2;
+static constexpr UINT backbuffer_count = 2;
 
-void read_file(const std::string& path, int& size_bytes, char*& data, const bool silent);
+void read_file(const std::string& path, size_t& size_bytes, char*& data, bool silent);
 
 int main()
 {
@@ -32,16 +35,16 @@ int main()
     HWND hwnd = glfwGetWin32Window(window);
 
     // Declare DirectX 12 handles
-    IDXGIFactory4* factory;
-    ID3D12Debug1* debug_interface;
+    ComPtr<IDXGIFactory4> factory;
+    [[maybe_unused]] ComPtr<ID3D12Debug1> debug_interface;// If we're in release mode, this variable will be unused
 
     // Create factory
     UINT dxgi_factory_flags = 0;
 
 #if _DEBUG
     // If we're in debug mode, create a debug layer for proper error tracking
-    ID3D12Debug* debug_layer;
-    ID3D12InfoQueue* debug_info_queue;
+    // Note: Errors will be printed in the Visual Studio output tab, and not in the console!
+    ComPtr<ID3D12Debug> debug_layer;
     throw_if_failed(D3D12GetDebugInterface(IID_PPV_ARGS(&debug_layer)));
     throw_if_failed(debug_layer->QueryInterface(IID_PPV_ARGS(&debug_interface)));
     debug_interface->EnableDebugLayer();
@@ -50,7 +53,8 @@ int main()
     debug_layer->Release();
 #endif
 
-    HRESULT result = CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&factory));
+    // This is for debugging purposes, so it may be unused
+    [[maybe_unused]] HRESULT result = CreateDXGIFactory2(dxgi_factory_flags, IID_PPV_ARGS(&factory));
 
     /* ADAPTER:
     * An adapter is used to get information about the GPU like the name, manufacturer,
@@ -59,10 +63,10 @@ int main()
     */
 
     // Create the device handle
-    ID3D12Device* device = nullptr;
+    ComPtr<ID3D12Device> device = nullptr;
 
     // Create adapter
-    IDXGIAdapter1* adapter;
+    ComPtr<IDXGIAdapter1> adapter;
     UINT adapter_index = 0;
     while (factory->EnumAdapters1(adapter_index, &adapter) != DXGI_ERROR_NOT_FOUND) {
         DXGI_ADAPTER_DESC1 desc;
@@ -74,7 +78,7 @@ int main()
         }
 
         // We should have a hardware adapter now, but does it support Direct3D 12.0?
-        if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device)))) {
+        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device)))) {
             // Yes it does! We use this one.
             break;
         }
@@ -95,8 +99,8 @@ int main()
 
 #if _DEBUG
     // If we're in debug mode, create the debug device handle
-    ID3D12DebugDevice* device_debug;
-    throw_if_failed(device->QueryInterface(&device_debug));
+    ComPtr<ID3D12DebugDevice> device_debug;
+    throw_if_failed(device->QueryInterface(device_debug.GetAddressOf()));
 #endif
 
     /* COMMAND LIST:
@@ -108,7 +112,7 @@ int main()
     */
 
     // Create command queue
-    ID3D12CommandQueue* command_queue;
+    ComPtr<ID3D12CommandQueue> command_queue;
     D3D12_COMMAND_QUEUE_DESC queue_desc = {};
     queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -118,7 +122,7 @@ int main()
     /* COMMAND ALLOCATOR:
     * A command allocator is used to create command lists
     */
-    ID3D12CommandAllocator* command_allocator;
+    ComPtr<ID3D12CommandAllocator> command_allocator;
     throw_if_failed(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, 
                                                    IID_PPV_ARGS(&command_allocator)));
 
@@ -130,9 +134,9 @@ int main()
     // Create fence
     UINT frame_index;
     HANDLE fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    ID3D12Fence* fences[backbuffer_count];
+    ComPtr<ID3D12Fence> fences[backbuffer_count];
     UINT64 fence_values[backbuffer_count];
-    for (int i = 0; i < backbuffer_count; ++i) {
+    for (unsigned i = 0u; i < backbuffer_count; ++i) {
         throw_if_failed(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fences[i])));
         fence_values[i] = 0;
     }
@@ -147,11 +151,10 @@ int main()
     */
 
     // Declare variables we need for swapchain
-    UINT curr_buffer;
-    ID3D12DescriptorHeap* render_target_view_heap;
-    ID3D12Resource* render_targets[backbuffer_count];
+    ComPtr<ID3D12DescriptorHeap> render_target_view_heap;
+    ComPtr<IDXGISwapChain3> swapchain = nullptr;
+    ComPtr<ID3D12Resource> render_targets[backbuffer_count];
     UINT render_target_view_descriptor_size;
-    IDXGISwapChain3* swapchain = nullptr;
     D3D12_VIEWPORT viewport;
     D3D12_RECT surface_size;
 
@@ -180,16 +183,15 @@ int main()
     swapchain_desc.SampleDesc.Count = 1;
 
     // Create fullscreen description
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen_desc = {};
+    //DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen_desc = {};
 
     // Create swapchain
     IDXGISwapChain1* new_swapchain;
-    result = factory->CreateSwapChainForHwnd(command_queue, hwnd, &swapchain_desc, 
+    result = factory->CreateSwapChainForHwnd(command_queue.Get(), hwnd, &swapchain_desc, 
                                     nullptr, nullptr, &new_swapchain);
-    HRESULT swapchain_support = new_swapchain->QueryInterface(__uuidof(IDXGISwapChain3), 
-                                                                (void**)&new_swapchain);
+    HRESULT swapchain_support = new_swapchain->QueryInterface(__uuidof(IDXGISwapChain3), reinterpret_cast<void**>(&new_swapchain));
     if (SUCCEEDED(swapchain_support)) {
-        swapchain = (IDXGISwapChain3*)new_swapchain;
+        swapchain = static_cast<IDXGISwapChain3*>(new_swapchain);
     }
 
     if (!swapchain) {
@@ -222,13 +224,15 @@ int main()
     render_target_view_descriptor_size = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
     // Create frame resources
-    D3D12_CPU_DESCRIPTOR_HANDLE render_target_view_handle(render_target_view_heap->GetCPUDescriptorHandleForHeapStart());
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE render_target_view_handle(render_target_view_heap->GetCPUDescriptorHandleForHeapStart());
 
-    // Create RTV for each frame
-    for (UINT i = 0; i < backbuffer_count; i++) {
-        throw_if_failed(swapchain->GetBuffer(i, IID_PPV_ARGS(&render_targets[i])));
-        device->CreateRenderTargetView(render_targets[i], nullptr, render_target_view_handle);
-        render_target_view_handle.ptr += (1 * render_target_view_descriptor_size);
+        // Create RTV for each frame
+        for (UINT i = 0; i < backbuffer_count; i++) {
+            throw_if_failed(swapchain->GetBuffer(i, IID_PPV_ARGS(&render_targets[i])));
+            device->CreateRenderTargetView(render_targets[i].Get(), nullptr, render_target_view_handle);
+            render_target_view_handle.ptr += render_target_view_descriptor_size;
+        }
     }
 
     /* ROOT SIGNATURE
@@ -236,7 +240,7 @@ int main()
     * shaders have access to, like constant buffers, structured buffers, textures and samplers
     */
 
-    ID3D12RootSignature* root_signature = nullptr;
+    ComPtr<ID3D12RootSignature> root_signature = nullptr;
     D3D12_FEATURE_DATA_ROOT_SIGNATURE feature_data{};
     feature_data.HighestVersion = D3D_ROOT_SIGNATURE_VERSION_1_1;
 
@@ -294,17 +298,17 @@ int main()
     */
 
     // Now let's create a root signature
-    ID3DBlob* signature;
-    ID3DBlob* error;
+    ComPtr<ID3DBlob> signature;
+    ComPtr<ID3DBlob> error;
     try {
         throw_if_failed(D3D12SerializeVersionedRootSignature(&root_signature_desc, &signature, &error));
         throw_if_failed(device->CreateRootSignature(0, signature->GetBufferPointer(), 
                         signature->GetBufferSize(), IID_PPV_ARGS(&root_signature)));
         root_signature->SetName(L"Hello Triangle Root Signature");
     }
-    catch (std::exception e) {
-        const char* errStr = (const char*)error->GetBufferPointer();
-        std::cout << errStr;
+    catch ([[maybe_unused]] std::exception& e) {
+        auto err_str = static_cast<const char*>(error->GetBufferPointer());
+        std::cout << err_str;
         error->Release();
         error = nullptr;
     }
@@ -326,12 +330,12 @@ int main()
     };
 
     // The vertex buffer we'll display to the screen
-    Vertex triangle_verts[] = {
+    constexpr Vertex triangle_verts[] = {
         {{+0.5f, -0.5f, 0.f}, {1.f, 0.f, 0.f }},
         {{-0.5f, -0.5f, 0.f}, {0.f, 1.f, 0.f }},
         {{ 0.0f, +0.5f, 0.f}, {0.f, 0.f, 1.f }},
     };
-    uint32_t triangle_indices[] = {
+    constexpr uint32_t triangle_indices[] = {
         0,
         1,
         2
@@ -343,12 +347,12 @@ int main()
     */
 
     // Declare handles
-    ID3D12Resource* vertex_buffer;
+    ComPtr<ID3D12Resource> vertex_buffer;
     D3D12_VERTEX_BUFFER_VIEW vertex_buffer_view;
 
     // Only the GPU needs this data, the CPU won't need this
     D3D12_RANGE vertex_range{ 0, 0 };
-    uint8_t* vertex_data_begin = nullptr;
+    uint8_t* vertex_data_begin;
 
     // Upload vertex buffer to GPU
     {
@@ -372,11 +376,10 @@ int main()
 
 
         throw_if_failed(device->CreateCommittedResource(&upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_buffer_desc,
-            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
-            ((void**)&vertex_buffer)));
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource), &vertex_buffer));
 
         // Bind the vertex buffer, copy the data to it, then unbind the vertex buffer
-        throw_if_failed(vertex_buffer->Map(0, &vertex_range, (void**)&vertex_data_begin));
+        throw_if_failed(vertex_buffer->Map(0, &vertex_range, reinterpret_cast<void**>(&vertex_data_begin)));
         memcpy_s(vertex_data_begin, sizeof(triangle_verts), triangle_verts, sizeof(triangle_verts));
         vertex_buffer->Unmap(0, nullptr);
 
@@ -393,7 +396,7 @@ int main()
     */
 
     // Declare handles
-    ID3D12Resource* index_buffer;
+    ComPtr<ID3D12Resource> index_buffer;
     D3D12_INDEX_BUFFER_VIEW index_buffer_view;
 
     // Only the GPU needs this data, the CPU won't need this
@@ -423,10 +426,10 @@ int main()
 
         throw_if_failed(device->CreateCommittedResource(&upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_buffer_desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
-            ((void**)&index_buffer)));
+            &index_buffer));
 
         // Bind the index buffer, copy the data to it, then unbind the index buffer
-        throw_if_failed(index_buffer->Map(0, &index_range, (void**)&index_data_begin));
+        throw_if_failed(index_buffer->Map(0, &index_range, reinterpret_cast<void**>(&index_data_begin)));
         memcpy_s(index_data_begin, sizeof(triangle_indices), triangle_indices, sizeof(triangle_indices));
         index_buffer->Unmap(0, nullptr);
 
@@ -446,11 +449,11 @@ int main()
     // Define what the constant buffer's layout is
     struct {
         glm::vec3 color_mul;
-    } const_buffer_data_struct;
+    } const_buffer_data_struct{};
 
     // Declare handles
-    ID3D12Resource* const_buffer;
-    ID3D12DescriptorHeap* const_buffer_heap = nullptr;
+    ComPtr<ID3D12Resource> const_buffer;
+    ComPtr<ID3D12DescriptorHeap> const_buffer_heap = nullptr;
     D3D12_CONSTANT_BUFFER_VIEW_DESC const_buffer_view_desc = {};
 
     // Only the GPU needs this data, the CPU won't need this
@@ -468,6 +471,7 @@ int main()
             D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
             1,
             D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+            0
         };
 
         throw_if_failed(device->CreateDescriptorHeap(&heap_desc, IID_PPV_ARGS(&const_buffer_heap)));
@@ -488,7 +492,7 @@ int main()
 
         throw_if_failed(device->CreateCommittedResource(&upload_heap_props, D3D12_HEAP_FLAG_NONE, &upload_buffer_desc,
             D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, __uuidof(ID3D12Resource),
-            ((void**)&const_buffer)));
+            &const_buffer));
 
         assert(const_buffer_heap != nullptr);
         const_buffer_heap->SetName(L"Constant Buffer Upload Resource Heap");
@@ -503,7 +507,7 @@ int main()
         device->CreateConstantBufferView(&const_buffer_view_desc, const_buffer_view_handle);
 
         // Bind the constant buffer, copy the data to it, then unbind the constant buffer
-        throw_if_failed(const_buffer->Map(0, &const_range, (void**)&const_data_begin));
+        throw_if_failed(const_buffer->Map(0, &const_range, reinterpret_cast<void**>(&const_data_begin)));
         memcpy_s(const_data_begin, sizeof(const_buffer_data_struct), &const_buffer_data_struct, sizeof(const_buffer_data_struct));
         const_buffer->Unmap(0, nullptr);
     }
@@ -519,8 +523,8 @@ int main()
     D3D12_SHADER_BYTECODE ps_bytecode{};
     std::string vs_path = file_to_load + ".vs.cso";
     std::string ps_path = file_to_load + ".ps.cso";
-    int vs_size = 0;
-    int ps_size = 0;
+    size_t vs_size = 0;
+    size_t ps_size = 0;
     char* vs_data = nullptr;
     char* ps_data = nullptr;
     read_file(vs_path, vs_size, vs_data, false);
@@ -546,7 +550,7 @@ int main()
     pipeline_state_desc.InputLayout = { input_element_descs, _countof(input_element_descs) };
 
     // Assign root signature
-    pipeline_state_desc.pRootSignature = root_signature;
+    pipeline_state_desc.pRootSignature = root_signature.Get();
 
     // Bind shaders
     pipeline_state_desc.VS = vs_bytecode;
@@ -572,7 +576,7 @@ int main()
     D3D12_BLEND_DESC blend_desc{};
     blend_desc.AlphaToCoverageEnable = FALSE;
     blend_desc.IndependentBlendEnable = FALSE;
-    const D3D12_RENDER_TARGET_BLEND_DESC default_render_target_blend_desc = {
+    constexpr D3D12_RENDER_TARGET_BLEND_DESC default_render_target_blend_desc = {
         FALSE,
         FALSE,
         D3D12_BLEND_ONE,
@@ -585,8 +589,8 @@ int main()
         D3D12_COLOR_WRITE_ENABLE_ALL,
     };
 
-    for (UINT i = 0; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i)
-        blend_desc.RenderTarget[i] = default_render_target_blend_desc;
+    for (auto& i : blend_desc.RenderTarget)
+        i = default_render_target_blend_desc;
 
     pipeline_state_desc.BlendState = blend_desc;
 
@@ -605,14 +609,13 @@ int main()
     try {
         throw_if_failed(device->CreateGraphicsPipelineState(&pipeline_state_desc, IID_PPV_ARGS(&pipeline_state)));
     }
-    catch (std::exception e) {
+    catch ([[maybe_unused]] std::exception& e) {
         puts("Failed to create Graphics Pipeline");
     }
 
     // Create command allocator and command list
-    ID3D12PipelineState* initial_pipeline_state = nullptr;
     ID3D12GraphicsCommandList* command_list;
-    throw_if_failed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator, pipeline_state, IID_PPV_ARGS(&command_list)));
+    throw_if_failed(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, command_allocator.Get(), pipeline_state, IID_PPV_ARGS(&command_list)));
 
 
     // Main window update loop
@@ -621,28 +624,25 @@ int main()
     float time = 0.0f;
 
     while (!glfwWindowShouldClose(window)) {
-        puts("Start of frame");
-        
         // Update delta time
         end = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration<float, std::ratio<1, 1>>(end - start).count();
         time += dt;
         start = std::chrono::high_resolution_clock::now();
-        printf("%.3f\n", time);;
 
         // Update constant buffer    
         const_buffer_data_struct.color_mul.r = sinf(time + 0.0f * 3.141593f) + 1.f;
         const_buffer_data_struct.color_mul.g = sinf(time + 0.5f * 3.141593f) + 1.f;
         const_buffer_data_struct.color_mul.b = sinf(time + 1.0f * 3.141593f) + 1.f;
-        throw_if_failed(const_buffer->Map(0, &const_range, (void**)&const_data_begin));
+        throw_if_failed(const_buffer->Map(0, &const_range, reinterpret_cast<void**>(&const_data_begin)));
         memcpy_s(const_data_begin, sizeof(const_buffer_data_struct), &const_buffer_data_struct, sizeof(const_buffer_data_struct));
         const_buffer->Unmap(0, nullptr);
 
         // Bind root signature
-        command_list->SetGraphicsRootSignature(root_signature);
+        command_list->SetGraphicsRootSignature(root_signature.Get());
 
         // Bind constant buffer
-        ID3D12DescriptorHeap* descriptor_heaps[] = { const_buffer_heap };
+        ID3D12DescriptorHeap* descriptor_heaps[] = { const_buffer_heap.Get() };
         command_list->SetDescriptorHeaps(_countof(descriptor_heaps), descriptor_heaps);
         D3D12_GPU_DESCRIPTOR_HANDLE const_buffer_view_handle(const_buffer_heap->GetGPUDescriptorHandleForHeapStart());
         
@@ -653,7 +653,7 @@ int main()
         D3D12_RESOURCE_BARRIER render_target_barrier;
         render_target_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         render_target_barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        render_target_barrier.Transition.pResource = render_targets[frame_index];
+        render_target_barrier.Transition.pResource = render_targets[frame_index].Get();
         render_target_barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
         render_target_barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
         render_target_barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -661,11 +661,11 @@ int main()
 
         // Set render target
         D3D12_CPU_DESCRIPTOR_HANDLE render_target_view_handle(render_target_view_heap->GetCPUDescriptorHandleForHeapStart());
-        render_target_view_handle.ptr += frame_index * render_target_view_descriptor_size;
+        render_target_view_handle.ptr += static_cast<SIZE_T>(frame_index * render_target_view_descriptor_size);
         command_list->OMSetRenderTargets(1, &render_target_view_handle, FALSE, nullptr);
 
         // Record raster commands
-        const float clear_color[] = {0.1f, 0.1f, 0.2f, 1.0f};
+        constexpr float clear_color[] = {0.1f, 0.1f, 0.2f, 1.0f};
         command_list->RSSetViewports(1, &viewport); // Set viewport
         command_list->RSSetScissorRects(1, &surface_size); // todo: comment
         command_list->ClearRenderTargetView(render_target_view_handle, clear_color, 0, nullptr); // Clear the screen
@@ -680,7 +680,7 @@ int main()
         D3D12_RESOURCE_BARRIER present_barrier;
         present_barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
         present_barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        present_barrier.Transition.pResource = render_targets[frame_index];
+        present_barrier.Transition.pResource = render_targets[frame_index].Get();
         present_barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
         present_barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
         present_barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
@@ -697,7 +697,7 @@ int main()
         swapchain->Present(1, 0);
 
         // Use fence to wait until the frame is fully rendered
-        throw_if_failed(command_queue->Signal(fences[frame_index], fence_values[frame_index]));
+        throw_if_failed(command_queue->Signal(fences[frame_index].Get(), fence_values[frame_index]));
 
         if (fences[frame_index]->GetCompletedValue() < fence_values[frame_index]) {
             throw_if_failed(fences[frame_index]->SetEventOnCompletion(fence_values[frame_index], fence_event));
@@ -713,7 +713,7 @@ int main()
 
         // Reset command allocator and use the raster graphics pipeline
         throw_if_failed(command_allocator->Reset());
-        throw_if_failed(command_list->Reset(command_allocator, pipeline_state));
+        throw_if_failed(command_list->Reset(command_allocator.Get(), pipeline_state));
     }
 
     /* TODO
@@ -724,7 +724,7 @@ int main()
     */
 }
 
-void read_file(const std::string& path, int& size_bytes, char*& data, const bool silent)
+void read_file(const std::string& path, size_t& size_bytes, char*& data, const bool silent)
 {
     //Open file
     std::ifstream file_stream(path, std::ios::binary);
@@ -744,23 +744,24 @@ void read_file(const std::string& path, int& size_bytes, char*& data, const bool
     file_stream.seekg(0, std::ifstream::end);
     const auto end = file_stream.tellg();
     const auto size = end - begin;
-    size_bytes = size;
+    size_bytes = static_cast<size_t>(size);
 
     //Allocate memory
     data = static_cast<char*>(malloc(static_cast<uint32_t>(size)));
 
     //Load file data into that memory
     file_stream.seekg(0, std::ifstream::beg);
-    std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file_stream), {});
+    const std::vector<unsigned char> buffer(std::istreambuf_iterator<char>(file_stream), {});
 
     //Is it actually open?
     if (buffer.empty())
     {
         if (!silent)
             printf("[ERROR] Failed to open file '%s'!\n", path.c_str());
+        free(data);
         size_bytes = 0;
         data = nullptr;
         return;
     }
-    memcpy(data, &buffer[0], size_bytes);
+    memcpy(data, buffer.data(), size_bytes);
 }
