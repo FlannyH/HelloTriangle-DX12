@@ -211,7 +211,7 @@ int main()
     * A bunch of resource descriptors in a row
     */
 
-    // Create render target view descriptor heap
+    // Create render target view heap descriptor
     D3D12_DESCRIPTOR_HEAP_DESC render_target_view_heap_desc{};
     render_target_view_heap_desc.NumDescriptors = backbuffer_count;
     render_target_view_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
