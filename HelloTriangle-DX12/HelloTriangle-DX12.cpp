@@ -182,9 +182,6 @@ int main()
     swapchain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
     swapchain_desc.SampleDesc.Count = 1;
 
-    // Create fullscreen description
-    //DXGI_SWAP_CHAIN_FULLSCREEN_DESC fullscreen_desc = {};
-
     // Create swapchain
     IDXGISwapChain1* new_swapchain;
     result = factory->CreateSwapChainForHwnd(command_queue.Get(), hwnd, &swapchain_desc, 
