@@ -31,7 +31,7 @@ int main()
     // Create window - use GLFW_NO_API, since we're not using OpenGL
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Hello Triangle (DirectX 12)", nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(width, height, "Hello Triangle (DirectX 12)", nullptr, nullptr);
     HWND hwnd = glfwGetWin32Window(window);
 
     // Declare DirectX 12 handles
